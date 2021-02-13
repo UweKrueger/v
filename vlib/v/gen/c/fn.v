@@ -7,6 +7,87 @@ import v.ast
 import v.table
 import v.util
 
+fn (mut g Gen) is_used_by_main(node ast.FnDecl) bool {
+	mut is_used_by_main := true
+	if g.pref.skip_unused {
+		fkey := if node.is_method { '${int(node.receiver.typ)}.$node.name' } else { node.name }
+		is_used_by_main = g.table.used_fns[fkey]
+		$if trace_skip_unused_fns ? {
+			println('> is_used_by_main: $is_used_by_main | node.name: $node.name | fkey: $fkey | node.is_method: $node.is_method')
+		}
+		if !is_used_by_main {
+			$if trace_skip_unused_fns_in_c_code ? {
+				g.writeln('// trace_skip_unused_fns_in_c_code, $node.name, fkey: $fkey')
+			}
+		}
+	} else {
+		$if trace_skip_unused_fns_in_c_code ? {
+			fkey := if node.is_method { '${int(node.receiver.typ)}.$node.name' } else { node.name }
+			g.writeln('// trace_skip_unused_fns_in_c_code, $node.name, fkey: $fkey')
+		}
+	}
+	return is_used_by_main
+}
+
+fn (mut g Gen) process_fn_decl(node ast.FnDecl) {
+	if !g.is_used_by_main(node) {
+		return
+	}
+	g.gen_attrs(node.attrs)
+	// g.tmp_count = 0 TODO
+	mut skip := false
+	pos := g.out.buf.len
+	should_bundle_module := util.should_bundle_module(node.mod)
+	if g.pref.build_mode == .build_module {
+		// if node.name.contains('parse_text') {
+		// println('!!! $node.name mod=$node.mod, built=$g.module_built')
+		// }
+		// TODO true for not just "builtin"
+		// TODO: clean this up
+		mod := if g.is_builtin_mod { 'builtin' } else { node.name.all_before_last('.') }
+		if (mod != g.module_built && node.mod != g.module_built.after('/')) || should_bundle_module {
+			// Skip functions that don't have to be generated for this module.
+			// println('skip bm $node.name mod=$node.mod module_built=$g.module_built')
+			skip = true
+		}
+		if g.is_builtin_mod && g.module_built == 'builtin' && node.mod == 'builtin' {
+			skip = false
+		}
+		if !skip && g.pref.is_verbose {
+			println('build module `$g.module_built` fn `$node.name`')
+		}
+	}
+	if g.pref.use_cache {
+		// We are using prebuilt modules, we do not need to generate
+		// their functions in main.c.
+		if node.mod != 'main' && node.mod != 'help' && !should_bundle_module && !g.pref.is_test
+			&& node.generic_params.len == 0 {
+			skip = true
+		}
+	}
+	keep_fn_decl := g.fn_decl
+	g.fn_decl = &node
+	if node.name == 'main.main' {
+		g.has_main = true
+	}
+	if node.name == 'backtrace' || node.name == 'backtrace_symbols'
+		|| node.name == 'backtrace_symbols_fd' {
+		g.write('\n#ifndef __cplusplus\n')
+	}
+	g.gen_fn_decl(node, skip)
+	if node.name == 'backtrace' || node.name == 'backtrace_symbols'
+		|| node.name == 'backtrace_symbols_fd' {
+		g.write('\n#endif\n')
+	}
+	g.fn_decl = keep_fn_decl
+	if skip {
+		g.out.go_back_to(pos)
+	}
+	if node.language != .c {
+		g.writeln('')
+	}
+}
+
 fn (mut g Gen) gen_fn_decl(node ast.FnDecl, skip bool) {
 	// TODO For some reason, build fails with autofree with this line
 	// as it's only informative, comment it for now
@@ -15,6 +96,19 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl, skip bool) {
 		// || node.no_body {
 		return
 	}
+	// Skip [if xxx] if xxx is not defined
+	/*
+	for attr in node.attrs {
+		if !attr.is_comptime_define {
+			continue
+		}
+		if attr.name !in g.pref.compile_defines_all {
+			// println('skipping [if]')
+			return
+		}
+	}
+	*/
+
 	g.returned_var_name = ''
 	//
 	old_g_autofree := g.is_autofree
@@ -41,6 +135,10 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl, skip bool) {
 		g.cur_generic_types = []
 		return
 	}
+	cur_fn_save := g.cur_fn
+	defer {
+		g.cur_fn = cur_fn_save
+	}
 	g.cur_fn = node
 	fn_start_pos := g.out.len
 	g.write_v_source_line_info(node.pos)
@@ -56,7 +154,7 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl, skip bool) {
 	}
 	//
 	mut name := node.name
-	if name in ['+', '-', '*', '/', '%', '<', '>', '==', '!=', '<=', '>='] {
+	if name in ['+', '-', '*', '/', '%', '<', '=='] {
 		name = util.replace_op(name)
 	}
 	if node.is_method {
@@ -79,7 +177,7 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl, skip bool) {
 		}
 	}
 	if g.pref.obfuscate && g.cur_mod.name == 'main' && name.starts_with('main__')
-		&& name != 'main__main'&& node.name != 'str' {
+		&& name != 'main__main' && node.name != 'str' {
 		mut key := node.name
 		if node.is_method {
 			sym := g.table.get_type_symbol(node.receiver.typ)
@@ -106,6 +204,10 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl, skip bool) {
 	mut impl_fn_name := name
 	if is_live_wrap {
 		impl_fn_name = 'impl_live_$name'
+	}
+	last_fn_c_name_save := g.last_fn_c_name
+	defer {
+		g.last_fn_c_name = last_fn_c_name_save
 	}
 	g.last_fn_c_name = impl_fn_name
 	//
@@ -138,16 +240,11 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl, skip bool) {
 		g.definitions.write(fn_header)
 		g.write(fn_header)
 	}
-	for param in node.params {
-		if param.is_mut {
-			g.fn_mut_arg_names << param.name
-		}
-	}
 	arg_start_pos := g.out.len
 	fargs, fargtypes := g.fn_args(node.params, node.is_variadic)
 	arg_str := g.out.after(arg_start_pos)
 	if node.no_body || ((g.pref.use_cache && g.pref.build_mode != .build_module) && node.is_builtin
-		&& !g.is_test)|| skip {
+		&& !g.is_test) || skip {
 		// Just a function header. Builtin function bodies are defined in builtin.o
 		g.definitions.writeln(');') // // NO BODY')
 		g.writeln(');')
@@ -155,6 +252,9 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl, skip bool) {
 	}
 	g.definitions.writeln(');')
 	g.writeln(') {')
+	for defer_stmt in node.defer_stmts {
+		g.writeln('bool ${g.defer_flag_var(defer_stmt)} = false;')
+	}
 	if is_live_wrap {
 		// The live function just calls its implementation dual, while ensuring
 		// that the call is wrapped by the mutex lock & unlock calls.
@@ -188,11 +288,8 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl, skip bool) {
 	g.defer_stmts = []
 	g.stmts(node.stmts)
 	// clear g.fn_mut_arg_names
-	if g.fn_mut_arg_names.len > 0 {
-		g.fn_mut_arg_names.clear()
-	}
 
-	if node.return_type == table.void_type {
+	if !node.has_return {
 		g.write_defer_stmts_when_needed()
 	}
 	if node.is_anon {
@@ -232,6 +329,10 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl, skip bool) {
 			g.writeln('}')
 		}
 	}
+}
+
+fn (g &Gen) defer_flag_var(stmt &ast.DeferStmt) string {
+	return '${g.last_fn_c_name}_defer_$stmt.idx_in_fn'
 }
 
 fn (mut g Gen) write_defer_stmts_when_needed() {
@@ -440,7 +541,7 @@ fn (mut g Gen) method_call(node ast.CallExpr) {
 		g.gen_str_for_type(node.receiver_type)
 	}
 	mut has_cast := false
-	if left_sym.kind == .map && node.name == 'clone' {
+	if left_sym.kind == .map && node.name in ['clone', 'move'] {
 		receiver_type_name = 'map'
 	}
 	// TODO performance, detect `array` method differently
@@ -522,7 +623,9 @@ fn (mut g Gen) method_call(node ast.CallExpr) {
 		}
 	} else if !node.receiver_type.is_ptr() && node.left_type.is_ptr() && node.name != 'str'
 		&& node.from_embed_type == 0 {
-		g.write('/*rec*/*')
+		if !node.left_type.has_flag(.shared_f) {
+			g.write('/*rec*/*')
+		}
 	}
 	if g.is_autofree && node.free_receiver && !g.inside_lambda && !g.is_builtin_mod {
 		// The receiver expression needs to be freed, use the temp var.
@@ -539,6 +642,9 @@ fn (mut g Gen) method_call(node ast.CallExpr) {
 				g.write('.')
 			}
 			g.write(embed_name)
+		}
+		if node.left_type.has_flag(.shared_f) && !node.receiver_type.is_ptr() {
+			g.write('->val')
 		}
 	}
 	if has_cast {
@@ -583,15 +689,16 @@ fn (mut g Gen) fn_call(node ast.CallExpr) {
 	is_print := name in ['print', 'println', 'eprint', 'eprintln']
 	print_method := name
 	is_json_encode := name == 'json.encode'
+	is_json_encode_pretty := name == 'json.encode_pretty'
 	is_json_decode := name == 'json.decode'
-	g.is_json_fn = is_json_encode || is_json_decode
+	g.is_json_fn = is_json_encode || is_json_encode_pretty || is_json_decode
 	mut json_type_str := ''
 	mut json_obj := ''
 	if g.is_json_fn {
 		json_obj = g.new_tmp_var()
 		mut tmp2 := ''
 		cur_line := g.go_before_stmt(0)
-		if is_json_encode {
+		if is_json_encode || is_json_encode_pretty {
 			g.gen_json_for_type(node.args[0].typ)
 			json_type_str = g.typ(node.args[0].typ)
 			// `json__encode` => `json__encode_User`
@@ -606,7 +713,11 @@ fn (mut g Gen) fn_call(node ast.CallExpr) {
 			g.call_args(node)
 			g.writeln(');')
 			tmp2 = g.new_tmp_var()
-			g.writeln('string $tmp2 = json__json_print($json_obj);')
+			if is_json_encode {
+				g.writeln('string $tmp2 = json__json_print($json_obj);')
+			} else {
+				g.writeln('string $tmp2 = json__json_print_pretty($json_obj);')
+			}
 		} else {
 			ast_type := node.args[0].expr as ast.Type
 			// `json.decode(User, s)` => json.decode_User(s)
@@ -857,7 +968,7 @@ fn (mut g Gen) call_args(node ast.CallExpr) {
 			break
 		}
 		use_tmp_var_autofree := g.is_autofree && arg.typ == table.string_type && arg.is_tmp_autofree
-			&& !g.inside_const&& !g.is_builtin_mod
+			&& !g.inside_const && !g.is_builtin_mod
 		// g.write('/* af=$arg.is_tmp_autofree */')
 		// some c fn definitions dont have args (cfns.v) or are not updated in checker
 		// when these are fixed we wont need this check
@@ -958,6 +1069,13 @@ fn (mut g Gen) ref_or_deref_arg(arg ast.CallArg, expected_type table.Type) {
 				g.write('(voidptr)&/*qq*/')
 			}
 		}
+	} else if arg.typ.has_flag(.shared_f) && !expected_type.has_flag(.shared_f) {
+		if expected_type.is_ptr() {
+			g.write('&')
+		}
+		g.expr(arg.expr)
+		g.write('->val')
+		return
 	}
 	g.expr_with_cast(arg.expr, arg.typ, expected_type)
 }

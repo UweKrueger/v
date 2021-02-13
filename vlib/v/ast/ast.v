@@ -201,6 +201,7 @@ pub:
 	mut_pos      int // mut:
 	pub_pos      int // pub:
 	pub_mut_pos  int // pub mut:
+	global_pos   int // __global:
 	module_pos   int // module:
 	language     table.Language
 	is_union     bool
@@ -284,8 +285,9 @@ pub:
 	mod_pos   token.Position
 	alias_pos token.Position
 pub mut:
-	syms     []ImportSymbol // the list of symbols in `import {symbol1, symbol2}`
-	comments []Comment
+	syms          []ImportSymbol // the list of symbols in `import {symbol1, symbol2}`
+	comments      []Comment
+	next_comments []Comment
 }
 
 // import symbol,for import {symbol} syntax
@@ -329,13 +331,17 @@ pub:
 	generic_params  []GenericParam
 	is_direct_arr   bool // direct array access
 	attrs           []table.Attr
+	skip_gen        bool // this function doesn't need to be generated (for example [if foo])
 pub mut:
 	stmts         []Stmt
+	defer_stmts   []DeferStmt
 	return_type   table.Type
+	has_return    bool
 	comments      []Comment // comments *after* the header, but *before* `{`; used for InterfaceDecl
 	next_comments []Comment // coments that are one line after the decl; used for InterfaceDecl
 	source_file   &File = 0
 	scope         &Scope
+	label_names   []string
 }
 
 pub struct GenericParam {
@@ -428,6 +434,7 @@ pub:
 	is_mut          bool
 	is_autofree_tmp bool
 	is_arg          bool // fn args should not be autofreed
+	is_auto_deref   bool
 pub mut:
 	typ            table.Type
 	orig_type      table.Type   // original sumtype type; 0 if it's not a sumtype
@@ -645,7 +652,7 @@ pub:
 pub struct LockExpr {
 pub:
 	stmts    []Stmt
-	is_rlock bool
+	is_rlock []bool
 	pos      token.Position
 pub mut:
 	lockeds []Ident // `x`, `y` in `lock x, y {`
@@ -887,7 +894,8 @@ pub:
 	stmts []Stmt
 	pos   token.Position
 pub mut:
-	ifdef string
+	ifdef     string
+	idx_in_fn int = -1 // index in FnDecl.defer_stmts
 }
 
 // `(3+4)`
@@ -1048,6 +1056,8 @@ pub:
 	pos       token.Position
 }
 */
+
+// deprecated
 pub struct Assoc {
 pub:
 	var_name string
@@ -1171,8 +1181,9 @@ pub:
 	updated_columns []string // for `update set x=y`
 	update_exprs    []Expr   // for `update`
 pub mut:
-	table_expr Type
-	fields     []table.Field
+	table_expr  Type
+	fields      []table.Field
+	sub_structs map[int]SqlStmt
 }
 
 pub struct SqlExpr {
@@ -1180,7 +1191,6 @@ pub:
 	typ         table.Type
 	is_count    bool
 	db_expr     Expr // `db` in `sql db {`
-	where_expr  Expr
 	has_where   bool
 	has_offset  bool
 	offset_expr Expr
@@ -1192,8 +1202,10 @@ pub:
 	has_limit   bool
 	limit_expr  Expr
 pub mut:
-	table_expr Type
-	fields     []table.Field
+	where_expr  Expr
+	table_expr  Type
+	fields      []table.Field
+	sub_structs map[int]SqlExpr
 }
 
 [inline]
@@ -1252,6 +1264,8 @@ pub fn (expr Expr) is_lvalue() bool {
 		CTempVar { return true }
 		IndexExpr { return expr.left.is_lvalue() }
 		SelectorExpr { return expr.expr.is_lvalue() }
+		ParExpr { return expr.expr.is_lvalue() } // for var := &{...(*pointer_var)}
+		PrefixExpr { return expr.right.is_lvalue() }
 		else {}
 	}
 	return false
@@ -1511,4 +1525,21 @@ pub fn ex2fe(x Expr) table.FExpr {
 	res := table.FExpr{}
 	unsafe { C.memcpy(&res, &x, sizeof(table.FExpr)) }
 	return res
+}
+
+// experimental ast.Table
+pub struct Table {
+	// pub mut:
+	// main_fn_decl_node FnDecl
+}
+
+pub fn (expr Expr) is_mut_ident() bool {
+	if expr is Ident {
+		if expr.obj is Var {
+			if expr.obj.is_auto_deref {
+				return true
+			}
+		}
+	}
+	return false
 }

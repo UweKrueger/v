@@ -6,6 +6,7 @@ module main
 import os
 import os.cmdline
 import rand
+import term
 import v.ast
 import v.pref
 import v.fmt
@@ -30,6 +31,7 @@ struct FormatOptions {
 const (
 	formatted_file_token = '\@\@\@' + 'FORMATTED_FILE: '
 	vtmp_folder          = util.get_vtmp_folder()
+	term_colors          = term.can_show_color_on_stderr()
 )
 
 fn main() {
@@ -51,6 +53,9 @@ fn main() {
 		is_debug: '-debug' in args
 		is_noerror: '-noerror' in args
 		is_verify: '-verify' in args
+	}
+	if term_colors {
+		os.setenv('VCOLORS', 'always', true)
 	}
 	if foptions.is_verbose {
 		eprintln('vfmt foptions: $foptions')
@@ -150,6 +155,7 @@ fn main() {
 		if foptions.is_c {
 			exit(2)
 		}
+		exit(1)
 	}
 }
 

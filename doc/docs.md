@@ -20,18 +20,23 @@ The major way to get the latest and greatest V, is to __install it from source__
 It is __easy__, and it usually takes __only a few seconds__.
 
 ### Linux, macOS, FreeBSD, etc:
-You need `git`, a C compiler like `gcc` or `clang`, and `make`:
+You need `git`, and a C compiler like `tcc`, `gcc` or `clang`, and `make`:
 ```bash
-git clone https://github.com/vlang/v && cd v && make
+git clone https://github.com/vlang/v 
+cd v 
+make
 ```
 
 ### Windows:
-You need `git`, and a C compiler like `gcc` or `msvc`:
+You need `git`, and a C compiler like `tcc`, `gcc`, `clang` or `msvc`:
 ```bash
 git clone https://github.com/vlang/v
 cd v
-make
+make.bat -tcc
 ```
+NB: You can also pass one of `-gcc`, `-msvc`, `-clang` to `make.bat` instead,
+if you do prefer to use a different C compiler, but -tcc is small, fast, and
+easy to install (V will download a prebuilt binary automatically).
 
 ### Android
 Running V graphical apps on Android is also possible via [vab](https://github.com/vlang/vab).
@@ -39,7 +44,7 @@ Running V graphical apps on Android is also possible via [vab](https://github.co
 V Android dependencies: **V**, **Java JDK** >= 8, Android **SDK + NDK**.
 
   1. Install dependencies (see [vab](https://github.com/vlang/vab))
-  2. Plugin-in your Android device
+  2. Connect your Android device
   3. Run:
   ```bash
   git clone https://github.com/vlang/vab && cd vab && v vab.v
@@ -86,10 +91,10 @@ For more details and troubleshooting, please visit the [vab GitHub repository](h
     * [Mutable arguments](#mutable-arguments)
     * [Anonymous & high order functions](#anonymous--high-order-functions)
 * [References](#references)
-* [Modules](#modules)
 * [Constants](#constants)
 * [Builtin functions](#builtin-functions)
-* [Printing custom types](#custom-print-of-types)
+* [Printing custom types](#printing-custom-types)
+* [Modules](#modules)
 * [Types 2](#types-2)
     * [Interfaces](#interfaces)
     * [Enums](#enums)
@@ -136,8 +141,8 @@ For more details and troubleshooting, please visit the [vab GitHub repository](h
 
 <!--
 NB: there are several special keywords, which you can put after the code fences for v:
-compile, ignore, failcompile, oksyntax, badsyntax, wip
-For more details, do: `v run cmd/tools/check-md.v`
+compile, live, ignore, failcompile, oksyntax, badsyntax, wip, nofmt
+For more details, do: `v check-md`
 -->
 
 ## Hello World
@@ -418,7 +423,7 @@ Literals like `123` or `4.56` are treated in a special way. They do
 not lead to type promotions, however they default to `int` and `f64`
 respectively, when their type has to be decided:
 
-```v ignore
+```v nofmt
 u := u16(12)
 v := 13 + u    // v is of type `u16` - no promotion
 x := f32(45.6)
@@ -718,7 +723,7 @@ numbers.sort() // 1, 2, 3
 numbers.sort(a > b) // 3, 2, 1
 ```
 
-```v nofmt
+```v
 struct User {
 	age  int
 	name string
@@ -757,7 +762,7 @@ println(array_2) // [0, 1, 3, 5, 4]
 
 ### Fixed size arrays
 
-V also supports arrays with fixed size. Unlike ordinary arrays, their 
+V also supports arrays with fixed size. Unlike ordinary arrays, their
 length is constant. You cannot append elements to them, nor shrink them.
 You can only modify their elements in place.
 
@@ -793,9 +798,12 @@ println(m['one']) // "1"
 println(m['bad_key']) // "0"
 println('bad_key' in m) // Use `in` to detect whether such key exists
 m.delete('two')
-// NB: map keys can have any type, `int` in this case,
-// and the whole map can be initialized using this short syntax:
-numbers := {
+```
+Maps can have keys of type string, rune, integer, float or voidptr.
+
+The whole map can be initialized using this short syntax:
+```v
+numbers := map{
 	1: 'one'
 	2: 'two'
 }
@@ -805,12 +813,14 @@ println(numbers)
 If a key is not found, a zero value is returned by default:
 
 ```v
-sm := {
+sm := map{
 	'abc': 'xyz'
 }
 val := sm['bad_key']
 println(val) // ''
-intm := {
+```
+```v
+intm := map{
 	1: 1234
 	2: 5678
 }
@@ -865,8 +875,12 @@ You can also import specific functions and types from modules directly:
 
 ```v
 import os { input }
-import crypto.sha256 { sum }
-import time { Time }
+
+fn main() {
+	// read text from stdin
+	name := input('Enter your name: ')
+	println('Hello, $name!')
+}
 ```
 Note: This is not allowed for constants - they must always be prefixed.
 
@@ -1046,15 +1060,18 @@ match mut x {
 ### In operator
 
 `in` allows to check whether an array or a map contains an element.
+To do the opposite, use `!in`.
 
 ```v
 nums := [1, 2, 3]
 println(1 in nums) // true
-m := {
+println(4 !in nums) // true
+m := map{
 	'one': 1
 	'two': 2
 }
 println('one' in m) // true
+println('three' !in m) // true
 ```
 
 It's also useful for writing boolean expressions that are clearer and more compact:
@@ -1087,7 +1104,12 @@ so both `if` statements above produce the same machine code and no arrays are cr
 
 V has only one looping keyword: `for`, with several forms.
 
-#### Array `for`
+#### `for`/`in`
+
+This is the most common form. You can use it with an array, map or 
+numeric range.
+
+##### Array `for`
 
 ```v
 numbers := [1, 2, 3, 4, 5]
@@ -1117,10 +1139,10 @@ println(numbers) // [1, 2, 3]
 ```
 When an identifier is just a single underscore, it is ignored.
 
-#### Map `for`
+##### Map `for`
 
 ```v
-m := {
+m := map{
 	'one': 1
 	'two': 2
 }
@@ -1133,7 +1155,7 @@ for key, value in m {
 
 Either key or value can be ignored by using a single underscore as the identifier.
 ```v
-m := {
+m := map{
 	'one': 1
 	'two': 2
 }
@@ -1151,7 +1173,7 @@ for _, value in m {
 }
 ```
 
-#### Range `for`
+##### Range `for`
 
 ```v
 // Prints '01234'
@@ -1484,7 +1506,7 @@ assert button.height == 20
 
 As you can see, both the struct name and braces can be omitted, instead of:
 
-```v ignore
+```v oksyntax nofmt
 new_button(ButtonConfig{text:'Click me', width:100})
 ```
 
@@ -1496,20 +1518,20 @@ Struct fields are private and immutable by default (making structs immutable as 
 Their access modifiers can be changed with
 `pub` and `mut`. In total, there are 5 possible options:
 
-```v nofmt
+```v
 struct Foo {
-    a int   // private immutable (default)
+	a int // private immutable (default)
 mut:
-    b int   // private mutable
-    c int   // (you can list multiple fields with the same access modifier)
+	b int // private mutable
+	c int // (you can list multiple fields with the same access modifier)
 pub:
-    d int   // public immutable (readonly)
+	d int // public immutable (readonly)
 pub mut:
-    e int   // public, but mutable only in parent module
+	e int // public, but mutable only in parent module
 __global:
-    f int   // public and mutable both inside and outside parent module
-}           // (not recommended to use, that's why the 'global' keyword
-            // starts with __)
+	// (not recommended to use, that's why the 'global' keyword starts with __)
+	f int // public and mutable both inside and outside parent module
+}
 ```
 
 For example, here's the `string` type defined in the `builtin` module:
@@ -1584,15 +1606,15 @@ intended for low-level applications like kernels and drivers.
 
 It is possible to modify function arguments by using the keyword `mut`:
 
-```v nofmt
+```v
 struct User {
 	name string
 mut:
-    is_registered bool
+	is_registered bool
 }
 
 fn (mut u User) register() {
-    u.is_registered = true
+	u.is_registered = true
 }
 
 mut user := User{}
@@ -1630,6 +1652,8 @@ Only more complex types such as arrays and maps may be modified.
 Use `user.register()` or `user = register(user)`
 instead of `register(mut user)`.
 
+#### Struct update syntax
+
 V makes it easy to return a modified version of an object:
 
 ```v
@@ -1641,7 +1665,7 @@ struct User {
 
 fn register(u User) User {
 	return {
-		u |
+		...u
 		is_registered: true
 	}
 }
@@ -1661,11 +1685,16 @@ fn sqr(n int) int {
 	return n * n
 }
 
+fn cube(n int) int {
+	return n * n * n
+}
+
 fn run(value int, op fn (int) int) int {
 	return op(value)
 }
 
 fn main() {
+	// Functions can be passed to other functions
 	println(run(5, sqr)) // "25"
 	// Anonymous functions can be declared inside other functions:
 	double_fn := fn (n int) int {
@@ -1676,6 +1705,15 @@ fn main() {
 	res := run(5, fn (n int) int {
 		return n + n
 	})
+	println(res) // "10"
+	// You can even have an array/map of functions:
+	fns := [sqr, cube]
+	println(fns[0](10)) // "100"
+	fns_map := map{
+		'sqr':  sqr
+		'cube': cube
+	}
+	println(fns_map['cube'](2)) // "8"
 }
 ```
 
@@ -1729,7 +1767,7 @@ struct Node<T> {
 
 ## Constants
 
-```v oksyntax
+```v
 const (
 	pi    = 3.14
 	world = '世界'
@@ -1741,8 +1779,12 @@ println(world)
 
 Constants are declared with `const`. They can only be defined
 at the module level (outside of functions).
+Constant values can never be changed. You can also declare a single 
+constant separately:
 
-Constant values can never be changed.
+```v
+const e = 2.71828
+```
 
 V constants are more flexible than in most languages. You can assign more complex values:
 
@@ -1768,7 +1810,7 @@ const (
 		g: 0
 		b: 0
 	}
-	// evaluate function call at compile-time
+	// evaluate function call at compile-time*
 	blue    = rgb(0, 0, 255)
 )
 
@@ -1776,29 +1818,32 @@ println(numbers)
 println(red)
 println(blue)
 ```
+\* WIP - for now function calls are evaluated at program start-up
 
-Global variables are not allowed, so this can be really useful.
+Global variables are not normally allowed, so this can be really useful.
+
+### Required module prefix
 
 When naming constants, `snake_case` must be used. In order to distinguish consts
 from local variables, the full path to consts must be specified. For example,
 to access the PI const, full `math.pi` name must be used both outside the `math`
 module, and inside it. That restriction is relaxed only for the `main` module
-(the one containing your `fn main()`, where you can use the shorter name of the
-constants too, i.e. just `println(numbers)`, not `println(main.numbers)` .
+(the one containing your `fn main()`), where you can use the unqualified name of
+constants defined there, i.e. `numbers`, rather than `main.numbers`.
 
 vfmt takes care of this rule, so you can type `println(pi)` inside the `math` module,
-and vffmt will automatically update it to `println(math.pi)`.
+and vfmt will automatically update it to `println(math.pi)`.
 
 <!--
 Many people prefer all caps consts: `TOP_CITIES`. This wouldn't work
 well in V, because consts are a lot more powerful than in other languages.
 They can represent complex structures, and this is used quite often since there
 are no globals:
--->
 
-```v ignore
-println('Top cities: $top_cities.filter(.usa)')
+```v oksyntax
+println('Top cities: ${top_cities.filter(.usa)}')
 ```
+-->
 
 ## Builtin functions
 
@@ -1819,15 +1864,21 @@ fn print_backtrace() // print backtraces on stderr
 `println` is a simple yet powerful builtin function, that can print anything:
 strings, numbers, arrays, maps, structs.
 
-```v nofmt
-struct User{ name string age int }
+```v
+struct User {
+	name string
+	age  int
+}
+
 println(1) // "1"
 println('hi') // "hi"
-println([1,2,3]) // "[1, 2, 3]"
-println(User{name:'Bob', age:20}) // "User{name:'Bob', age:20}"
+println([1, 2, 3]) // "[1, 2, 3]"
+println(User{ name: 'Bob', age: 20 }) // "User{name:'Bob', age:20}"
 ```
 
-## Custom print of types
+<a id='custom-print-of-types' />
+
+## Printing custom types
 
 If you want to define a custom print value for your type, simply define a
 `.str() string` method:
@@ -2141,10 +2192,10 @@ That's why you have to declare a `mut` before the `is` expression:
 
 ```v ignore
 if mut w is Mars {
-    assert typeof(w).name == 'Mars'
-    if w.dust_storm() {
-        println('bad weather!')
-    }
+	assert typeof(w).name == 'Mars'
+	if w.dust_storm() {
+		println('bad weather!')
+	}
 }
 ```
 Otherwise `w` would keep its original type.
@@ -3261,7 +3312,7 @@ To cast a `voidptr` to a V reference, use `user := &User(user_void_ptr)`.
 
 `voidptr` can also be dereferenced into a V struct through casting: `user := User(user_void_ptr)`.
 
-[socket.v has an example which calls C code from V](https://github.com/vlang/v/blob/master/vlib/net/socket.v) .
+[an example of a module that calls C code from V](https://github.com/vlang/v/blob/master/vlib/v/tests/project_with_c_code/mod1/wrapper.v)
 
 ## Debugging generated C code
 
@@ -3503,6 +3554,7 @@ V also gives your code access to a set of pseudo string variables,
 that are substituted at compile time:
 
 - `@FN` => replaced with the name of the current V function
+- `@METHOD` => replaced with ReceiverType.MethodName
 - `@MOD` => replaced with the name of the current V module
 - `@STRUCT` => replaced with the name of the current V struct
 - `@FILE` => replaced with the path of the V source file
@@ -3637,7 +3689,8 @@ To improve safety and maintainability, operator overloading is limited:
 - `==` and `!=` are self generated by the compiler but can be overriden.
 - Calling other functions inside operator functions is not allowed.
 - Operator functions can't modify their arguments.
-- When using `<`, `>`, `>=`, `<=`, `==` and `!=` operators, the return type must be `bool`.
+- When using `<` and `==` operators, the return type must be `bool`.
+- `!=`, `>`, `<=` and `>=` are auto generated when `==` and `<` are defined.
 - Both arguments must have the same type (just like with all operators in V).
 - Assignment operators (`*=`, `+=`, `/=`, etc)
 are auto generated when the operators are defined though they must return the same type.
@@ -3782,17 +3835,19 @@ module global (so that you can use `ls()` instead of `os.ls()`, for example).
 // so it can be run just by specifying the path to the file
 // once it's made executable using `chmod +x`.
 
-rm('build/*')
+rm('build/*')?
 // Same as:
-for file in ls('build/') {
-    rm(file)
+files_build := ls('build/')?
+for file in files_build {
+    rm(file)?
 }
 
-mv('*.v', 'build/')
+mv('*.v', 'build/')?
 // Same as:
-for file in ls('.') {
+files := ls('.')?
+for file in files {
     if file.ends_with('.v') {
-        mv(file, 'build/')
+        mv(file, 'build/')?
     }
 }
 ```
@@ -3825,8 +3880,9 @@ fn old_function() {
 fn inlined_function() {
 }
 
-// The following struct can only be used as a reference (`&Window`) and allocated on the heap.
-[ref_only]
+// The following struct must be allocated on the heap. Therefore, it can only be used as a 
+// reference (`&Window`) or inside another reference (`&OuterStruct{ Window{...} }`).
+[heap]
 struct Window {
 }
 
@@ -3866,8 +3922,8 @@ if x {
 }
 my_label:
 ```
-`goto` should be avoided when `for` can be used instead. In particular, 
-[labelled break](#labelled-break--continue) can be used to break out of 
+`goto` should be avoided when `for` can be used instead. In particular,
+[labelled break](#labelled-break--continue) can be used to break out of
 a nested loop.
 
 # Appendices
